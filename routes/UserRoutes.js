@@ -1,6 +1,8 @@
 const router  = require('express').Router()
 const User    = require('../models/User')
-
+const bcrypt   = require('bcrypt')
+const jwt      = require('jsonwebtoken') 
+require('dotenv').config()
 
 router.post('/', async function(req,res){
 
@@ -54,7 +56,20 @@ router.post('/', async function(req,res){
         return
     }
 
-    const user = { name, email, password, phone, type, status }
+    const chkUserExists = await User.findOne({email: email})
+    if(chkUserExists){
+        res.status(422).json({
+            status: 'error',
+            message: 'This email already exists, please choose another email or reset your password'
+        })
+        return
+    }
+
+    const salt = await bcrypt.genSalt(12)
+
+    const passwordHash = await bcrypt.hash(password, salt)
+
+    const user = { name, email, password:passwordHash, phone, type, status }
 
     try{
 
@@ -198,5 +213,133 @@ router.delete('/:id', async function(req,res){
     }
 
 })
+
+router.post('/auth', async function(req,res){
+
+   const { email, password } = req.body
+
+   if(!email){
+        res.status(422).json({
+            status: 'warning',
+            message: 'E-mail is required'
+        })
+        return
+    }
+
+    const user = await User.findOne({email: email})
+    if(!user){
+        res.status(404).json({
+            status: 'error',
+            message: 'Email was not found'
+        })
+        return
+    }
+
+    if(!password){
+        res.status(422).json({
+            status: 'warning',
+            message: 'Password is required'
+        })
+        return
+    }
+
+    let usrPassword   = user.password    
+    const chkPassword = await bcrypt.compare(password,  usrPassword)
+    if(!chkPassword){
+        res.status(422).json({
+            status: 'warning',
+            message: 'Password is wrong'
+        })
+        return
+    }
+
+    try{
+
+        const secret = process.env.SECRET
+
+        const token = jwt.sign(
+            {
+                id: user._id
+            },
+            secret,
+        )
+
+        res.status(200).json({
+            status: 'success',
+            message: 'Login was successfully',
+            token: token
+        })
+        return
+
+    } catch(error){
+        res.status(500).json({
+            status: 'error',
+            message: 'There was an error with your request, please contact support'
+        })
+        return
+    }
+    
+    
+
+})
+
+router.get('/data/:id', checkToken, async function(req,res){
+
+    const id = req.params.id
+
+    if(id.length > 24){
+        res.status(422).json({
+            status: 'error',
+            message: 'User id is invalid'
+        })
+        return
+    }
+
+    const user = await User.findById(id, '-password') 
+
+    if(!user){
+        res.status(404).json({
+            status: 'error',
+            message: 'User was not found'
+        })
+        return
+    }
+
+    res.status(200).json({
+        status: 'success',
+        message: 'User was found'
+    })
+    return
+
+})
+
+function checkToken(req,res,next){
+
+    const secret = process.env.SECRET
+    const authHeader = req.headers['authorization']
+    const token = authHeader && authHeader.split(" ")[1]
+
+    if(!token){
+        res.status(401).json({
+            status: 'error',
+            message: 'Access denied'
+        })
+        return
+    } 
+
+    try{
+
+       jwt.verify(token, secret)
+       next()
+
+    } catch(error){
+        res.status(400).json({
+            status: 'error',
+            message: 'Token is invalid'
+        })
+        return
+    }
+
+}
 
 module.exports = router
